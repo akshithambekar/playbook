@@ -4,41 +4,27 @@ import { AgentConsole } from "./components/AgentConsole";
 export default async function Home() {
   const supabase = await createClient();
 
-  // Fetch latest playbook + last improvement log in parallel
-  const [playbookRes, lastLogRes] = await Promise.all([
+  const [playbooksRes, totalCallsRes, analyzedCallsRes, latestCallRes] = await Promise.all([
     supabase
       .from("playbooks")
       .select("*")
-      .order("version", { ascending: false })
-      .limit(1)
-      .single(),
+      .order("version", { ascending: false }),
     supabase
       .from("improvement_logs")
-      .select("created_at")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single(),
-  ]);
-
-  const playbook = playbookRes.data;
-  const since = lastLogRes.data?.created_at ?? new Date(0).toISOString();
-
-  // Count calls since last improvement + fetch recent logs in parallel
-  const [callCountRes, logsRes] = await Promise.all([
+      .select("id", { count: "exact", head: true }),
+    supabase.from("call_analysis").select("id", { count: "exact", head: true }),
     supabase
       .from("calls")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", since),
-    supabase
-      .from("improvement_logs")
-      .select("id, calls_analyzed, analysis_summary, created_at")
+      .select("id, elevenlabs_conversation_id, transcript, created_at, call_analysis(id)")
       .order("created_at", { ascending: false })
-      .limit(5),
+      .limit(1)
+      .maybeSingle(),
   ]);
 
-  const batchSize = parseInt(process.env.IMPROVEMENT_BATCH_SIZE ?? "3", 10);
+  const playbooks = playbooksRes.data ?? [];
+  const latestCall = latestCallRes.data;
 
-  if (!playbook) {
+  if (playbooks.length === 0) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <p className="text-slate-500 text-sm" style={{ fontFamily: "var(--font-jetbrains-mono)" }}>
@@ -52,10 +38,22 @@ export default async function Home() {
 
   return (
     <AgentConsole
-      playbook={playbook}
-      callsSinceLast={callCountRes.count ?? 0}
-      batchSize={batchSize}
-      improvementLogs={logsRes.data ?? []}
+      initialPlaybooks={playbooks}
+      initialSummary={{
+        totalCalls: totalCallsRes.count ?? 0,
+        analyzedCalls: analyzedCallsRes.count ?? 0,
+        latestCall: latestCall
+          ? {
+              id: latestCall.id,
+              conversationId: latestCall.elevenlabs_conversation_id,
+              createdAt: latestCall.created_at,
+              transcriptPreview: (latestCall.transcript ?? "").slice(0, 180),
+              hasAnalysis:
+                Array.isArray(latestCall.call_analysis) &&
+                latestCall.call_analysis.length > 0,
+            }
+          : null,
+      }}
     />
   );
 }

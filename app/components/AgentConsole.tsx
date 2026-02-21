@@ -1,7 +1,7 @@
 "use client";
 
 import { useConversation } from "@elevenlabs/react";
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useMemo, useEffect } from "react";
 
 export type Playbook = {
   id: string;
@@ -23,10 +23,18 @@ export type ImprovementLog = {
 };
 
 type Props = {
-  playbook: Playbook;
-  callsSinceLast: number;
-  batchSize: number;
-  improvementLogs: ImprovementLog[];
+  initialPlaybooks: Playbook[];
+  initialSummary: {
+    totalCalls: number;
+    analyzedCalls: number;
+    latestCall: {
+      id: string;
+      conversationId: string;
+      createdAt: string;
+      transcriptPreview: string;
+      hasAnalysis: boolean;
+    } | null;
+  };
 };
 
 function SoundBars() {
@@ -88,17 +96,85 @@ async function persistTranscriptWithRetry(conversationId: string) {
 }
 
 export function AgentConsole({
-  playbook,
-  callsSinceLast,
-  batchSize,
-  improvementLogs,
+  initialPlaybooks,
+  initialSummary,
 }: Props) {
   const [isStarting, setIsStarting] = useState(false);
-  const [callCount, setCallCount] = useState(callsSinceLast);
+  const [playbooks, setPlaybooks] = useState<Playbook[]>(initialPlaybooks);
+  const [summary, setSummary] = useState(initialSummary);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [callError, setCallError] = useState<string | null>(null);
+  const [lastSyncLabel, setLastSyncLabel] = useState("pending");
   // Ref so the onDisconnect closure always has the current conversation ID
   const conversationIdRef = useRef<string | null>(null);
+
+  const activePlaybook = useMemo(
+    () => playbooks.reduce((top, p) => (p.version > top.version ? p : top), playbooks[0]),
+    [playbooks]
+  );
+  const [selectedPlaybookId, setSelectedPlaybookId] = useState(
+    initialPlaybooks[0]?.id ?? ""
+  );
+  const selectedPlaybook =
+    playbooks.find((p) => p.id === selectedPlaybookId) ?? activePlaybook;
+  const selectedPlaybookIndex = Math.max(
+    0,
+    playbooks.findIndex((p) => p.id === selectedPlaybook.id)
+  );
+
+  const canGoNewer = selectedPlaybookIndex > 0;
+  const canGoOlder = selectedPlaybookIndex < playbooks.length - 1;
+
+  const formatUtc = (iso: string) =>
+    new Date(iso).toISOString().replace("T", " ").slice(0, 16) + " UTC";
+
+  const refreshData = useCallback(async () => {
+    try {
+      const [playbooksRes, summaryRes] = await Promise.all([
+        fetch("/api/playbooks"),
+        fetch("/api/calls/summary"),
+      ]);
+      const playbooksJson = await playbooksRes.json();
+      const summaryJson = await summaryRes.json();
+
+      if (playbooksRes.ok && Array.isArray(playbooksJson.playbooks)) {
+        setPlaybooks(playbooksJson.playbooks);
+        const selectedStillExists = playbooksJson.playbooks.some(
+          (p: Playbook) => p.id === selectedPlaybookId
+        );
+        if (!selectedStillExists && playbooksJson.playbooks[0]) {
+          setSelectedPlaybookId(playbooksJson.playbooks[0].id);
+        }
+      }
+
+      if (summaryRes.ok) {
+        setSummary({
+          totalCalls: summaryJson.total_calls ?? 0,
+          analyzedCalls: summaryJson.analyzed_calls ?? 0,
+          latestCall: summaryJson.latest_call
+            ? {
+                id: summaryJson.latest_call.id,
+                conversationId: summaryJson.latest_call.conversation_id,
+                createdAt: summaryJson.latest_call.created_at,
+                transcriptPreview: summaryJson.latest_call.transcript_preview ?? "",
+                hasAnalysis: Boolean(summaryJson.latest_call.has_analysis),
+              }
+            : null,
+        });
+      }
+      setLastSyncLabel(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    } catch (err) {
+      console.error("[dashboard-refresh]", err);
+    }
+  }, [selectedPlaybookId]);
+
+  useEffect(() => {
+    setLastSyncLabel(new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" }));
+    const timer = setInterval(() => {
+      refreshData().catch((err) => console.error("[dashboard-refresh]", err));
+    }, 8000);
+    return () => clearInterval(timer);
+  }, [refreshData]);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -107,7 +183,7 @@ export function AgentConsole({
     },
     onDisconnect: () => {
       const endedId = conversationIdRef.current;
-      setCallCount((prev) => prev + 1);
+      setSummary((prev) => ({ ...prev, totalCalls: prev.totalCalls + 1 }));
       setConversationId(null);
       conversationIdRef.current = null;
 
@@ -116,6 +192,8 @@ export function AgentConsole({
           console.error("[save-transcript]", err)
         );
       }
+
+      refreshData().catch((err) => console.error("[dashboard-refresh]", err));
     },
     onError: (msg) => {
       console.error("[ElevenLabs]", msg);
@@ -137,11 +215,11 @@ export function AgentConsole({
       const id = await conversation.startSession({
         signedUrl: json.signed_url,
         dynamicVariables: {
-          playbook_strategy: playbook.strategy,
-          opener: playbook.opener,
-          objection_style: playbook.objection_style,
-          tone: playbook.tone,
-          close_technique: playbook.close_technique,
+          playbook_strategy: activePlaybook.strategy,
+          opener: activePlaybook.opener,
+          objection_style: activePlaybook.objection_style,
+          tone: activePlaybook.tone,
+          close_technique: activePlaybook.close_technique,
         },
       });
       setConversationId(id);
@@ -151,7 +229,7 @@ export function AgentConsole({
       setCallError(msg);
       setIsStarting(false);
     }
-  }, [conversation, playbook]);
+  }, [conversation, activePlaybook]);
 
   const handleEndCall = useCallback(async () => {
     await conversation.endSession();
@@ -161,8 +239,10 @@ export function AgentConsole({
   const isConnecting = isStarting || conversation.status === "connecting";
   const isSpeaking = isConnected && conversation.isSpeaking;
 
-  const callsUntilNext = Math.max(0, batchSize - callCount);
-  const progressPct = Math.min(100, (callCount / batchSize) * 100);
+  const analysisPct =
+    summary.totalCalls > 0
+      ? Math.round((summary.analyzedCalls / summary.totalCalls) * 100)
+      : 0;
 
   return (
     <div
@@ -188,7 +268,7 @@ export function AgentConsole({
             className="text-xs text-amber-400"
             style={{ fontFamily: "var(--font-mono)" }}
           >
-            PLAYBOOK v{playbook.version}
+            PLAYBOOK v{activePlaybook.version}
           </span>
 
           <div
@@ -223,14 +303,55 @@ export function AgentConsole({
 
       {/* ── Main 3-column grid ── */}
       <main className="flex-1 grid grid-cols-[1fr_300px_1fr] min-h-0">
-        {/* ── Left: Active Playbook ── */}
+        {/* ── Left: Playbook Evolution ── */}
         <div className="border-r border-[#1a1a28] p-6 overflow-y-auto">
           <h2
             className="text-[9px] tracking-[0.28em] uppercase text-slate-600 mb-5"
             style={{ fontFamily: "var(--font-mono)" }}
           >
-            Active Playbook
+            Playbook Evolution
           </h2>
+
+          <div className="mb-5 rounded-md border border-[#1a1a28] p-3 bg-[#0b0b14]">
+            <p className="text-[10px] text-slate-500 mb-2" style={{ fontFamily: "var(--font-mono)" }}>
+              Versions ({playbooks.length})
+            </p>
+            <div className="rounded-md border border-[#2a2a3a] bg-[#080811] p-3">
+              <div className="flex items-center justify-between mb-3">
+                <button
+                  type="button"
+                  onClick={() =>
+                    canGoNewer && setSelectedPlaybookId(playbooks[selectedPlaybookIndex - 1].id)
+                  }
+                  disabled={!canGoNewer}
+                  className="w-8 h-8 rounded-full border border-[#2a2a3a] text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed hover:border-lime-400/50"
+                  aria-label="Show newer playbook"
+                >
+                  ←
+                </button>
+                <div className="text-center">
+                  <p className="text-lg text-slate-100">v{selectedPlaybook.version}</p>
+                  <p className="text-[10px] text-slate-500" style={{ fontFamily: "var(--font-mono)" }}>
+                    {selectedPlaybookIndex + 1} / {playbooks.length} (newest → oldest)
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() =>
+                    canGoOlder && setSelectedPlaybookId(playbooks[selectedPlaybookIndex + 1].id)
+                  }
+                  disabled={!canGoOlder}
+                  className="w-8 h-8 rounded-full border border-[#2a2a3a] text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed hover:border-lime-400/50"
+                  aria-label="Show older playbook"
+                >
+                  →
+                </button>
+              </div>
+              <p className="text-[10px] text-slate-500" style={{ fontFamily: "var(--font-mono)" }}>
+                Created {formatUtc(selectedPlaybook.created_at)}
+              </p>
+            </div>
+          </div>
 
           <div className="space-y-3">
             {PLAYBOOK_FIELDS.map(({ key, label }) => (
@@ -245,13 +366,13 @@ export function AgentConsole({
                   {label}
                 </div>
                 <p className="text-sm text-slate-300 leading-relaxed">
-                  {playbook[key] as string}
+                  {selectedPlaybook[key] as string}
                 </p>
               </div>
             ))}
           </div>
 
-          {playbook.rationale && (
+          {selectedPlaybook.rationale && (
             <div className="mt-4 pt-4 border-t border-[#1a1a28]">
               <div
                 className="text-[9px] tracking-[0.22em] uppercase text-slate-600 mb-1.5"
@@ -260,7 +381,7 @@ export function AgentConsole({
                 Rationale
               </div>
               <p className="text-xs text-slate-500 leading-relaxed">
-                {playbook.rationale}
+                {selectedPlaybook.rationale}
               </p>
             </div>
           )}
@@ -381,93 +502,91 @@ export function AgentConsole({
             className="text-[9px] tracking-[0.28em] uppercase text-slate-600 mb-5"
             style={{ fontFamily: "var(--font-mono)" }}
           >
-            Improvement Engine
+            Learning Engine
           </h2>
 
-          {/* Cycle progress */}
           <div className="border border-[#1a1a28] rounded-md p-4 mb-4">
             <div className="flex items-baseline justify-between mb-2">
               <span
                 className="text-[9px] uppercase tracking-widest text-slate-600"
                 style={{ fontFamily: "var(--font-mono)" }}
               >
-                This Cycle
+                Calls Processed
               </span>
               <span
                 className="text-sm text-amber-400"
                 style={{ fontFamily: "var(--font-mono)" }}
               >
-                {callCount}
-                <span className="text-slate-600">/{batchSize}</span>
+                {summary.totalCalls}
+                <span className="text-slate-600"> total</span>
               </span>
             </div>
 
             <div className="w-full h-1 bg-[#1a1a28] rounded-full overflow-hidden">
               <div
                 className="h-full bg-amber-400 rounded-full transition-all duration-500"
-                style={{ width: `${progressPct}%` }}
+                style={{ width: `${analysisPct}%` }}
               />
             </div>
 
             <p className="text-xs text-slate-500 mt-2.5">
-              {callsUntilNext === 0
-                ? "Rewrite triggered — Airia is running…"
-                : `${callsUntilNext} call${callsUntilNext !== 1 ? "s" : ""} until next playbook rewrite`}
+              {summary.analyzedCalls} analyzed ({analysisPct}% coverage)
             </p>
           </div>
 
-          {/* Improvement history */}
-          {improvementLogs.length > 0 ? (
-            <div className="space-y-3">
+          <div className="space-y-3">
+            <div className="border border-[#1a1a28] rounded-md p-4">
               <div
-                className="text-[9px] tracking-[0.22em] uppercase text-slate-600"
+                className="text-[9px] tracking-[0.22em] uppercase text-slate-600 mb-2"
                 style={{ fontFamily: "var(--font-mono)" }}
               >
-                History
+                Latest Rewrite
               </div>
-              {improvementLogs.map((log) => (
-                <div
-                  key={log.id}
-                  className="border border-[#1a1a28] rounded-md p-3 hover:border-[#2a2a3a] transition-colors"
-                >
-                  <div className="flex items-center justify-between mb-1.5">
-                    <span
-                      className="text-[9px] text-slate-600"
-                      style={{ fontFamily: "var(--font-mono)" }}
-                    >
-                      {new Date(log.created_at).toLocaleString([], {
-                        month: "short",
-                        day: "numeric",
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </span>
-                    <span
-                      className="text-[9px] text-amber-400"
-                      style={{ fontFamily: "var(--font-mono)" }}
-                    >
-                      {log.calls_analyzed} calls
-                    </span>
-                  </div>
-                  {log.analysis_summary && (
-                    <p className="text-xs text-slate-400 leading-relaxed line-clamp-3">
-                      {log.analysis_summary}
-                    </p>
-                  )}
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="border border-[#1a1a28] rounded-md p-5 text-center">
-              <p className="text-xs text-slate-600 leading-relaxed">
-                No improvements yet.
-                <br />
-                Complete {batchSize} calls to trigger
-                <br />
-                the first Airia rewrite.
+              <p className="text-sm text-lime-300 mb-1">v{activePlaybook.version}</p>
+              <p className="text-xs text-slate-500">
+                {formatUtc(activePlaybook.created_at)}
               </p>
             </div>
-          )}
+
+            <div className="border border-[#1a1a28] rounded-md p-4">
+              <div
+                className="text-[9px] tracking-[0.22em] uppercase text-slate-600 mb-2"
+                style={{ fontFamily: "var(--font-mono)" }}
+              >
+                Latest Call
+              </div>
+              {summary.latestCall ? (
+                <>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span
+                      className="text-[9px] text-slate-500"
+                      style={{ fontFamily: "var(--font-mono)" }}
+                    >
+                      {formatUtc(summary.latestCall.createdAt)}
+                    </span>
+                    <span
+                      className={`text-[10px] px-2 py-1 rounded border ${
+                        summary.latestCall.hasAnalysis
+                          ? "text-lime-300 border-lime-400/30 bg-lime-400/10"
+                          : "text-amber-300 border-amber-400/30 bg-amber-400/10"
+                      }`}
+                    >
+                      {summary.latestCall.hasAnalysis ? "Analyzed" : "Pending Analysis"}
+                    </span>
+                  </div>
+                  <p className="text-xs text-slate-400 leading-relaxed line-clamp-4">
+                    {summary.latestCall.transcriptPreview || "No transcript preview yet."}
+                  </p>
+                </>
+              ) : (
+                <p className="text-xs text-slate-500">No calls yet.</p>
+              )}
+            </div>
+
+            <p className="text-[10px] text-slate-600" style={{ fontFamily: "var(--font-mono)" }}>
+              Auto-sync every 8s · Last sync {lastSyncLabel}
+            </p>
+          </div>
         </div>
       </main>
 

@@ -22,11 +22,12 @@ An autonomous voice sales agent built on ElevenLabs Conversational AI that condu
 - [x] Frontend includes ElevenLabs widget session startup + dynamic variables + improvement status UI
 - [x] Fallback transcript sync route (`POST /api/calls/save-transcript`) for conversations that did not arrive via webhook
 
-### In progress / needs live verification
+### In progress / needs broader live verification
 
-- [ ] ElevenLabs transcript webhook delivery is currently unreliable/not observed consistently
-- [ ] End-to-end webhook verification through ngrok (transcript + audio)
-- [ ] Velma output quality validation across 2-3 real calls
+- [x] End-to-end webhook route behavior validated in local smoke tests (transcript + audio route responses observed)
+- [x] Audio analysis write path validated: `POST /api/webhooks/audio` -> Velma -> `call_analysis` upsert
+- [ ] ElevenLabs webhook reliability validation across multiple real conversations (not just one-off tests)
+- [ ] Velma output quality validation across 2-3 real conversations
 - [ ] Airia full 6-node pipeline verification against live `GET /api/calls/recent` data
 - [ ] Improvement loop verification: conversation -> analysis -> rewrite -> next call uses updated playbook
 
@@ -38,9 +39,9 @@ An autonomous voice sales agent built on ElevenLabs Conversational AI that condu
 - [ ] Demo assets and rehearsal package (screenshots, logs, playbook diffs, speaker roles)
 - [ ] Final Devpost submission polish
 
-### Immediate blocker
+### Immediate attention item
 
-- Transcript webhook issue: ElevenLabs transcript callbacks are not consistently reaching/processing at `POST /api/webhooks/transcript`.
+- Webhook delivery consistency from ElevenLabs still needs repeated-run validation under live call volume (latest local webhook route tests are passing).
 
 ---
 

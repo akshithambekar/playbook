@@ -57,15 +57,37 @@ export async function POST() {
   }
 
   const airiaKey = process.env.AIRIA_API_KEY;
+  const triggerContext = {
+    calls_since: callsSince,
+    triggered_at: new Date().toISOString(),
+  };
+  const payload = JSON.stringify({
+    // Airia PipelineExecution API expects at least one of: UserInput, Images, Files.
+    UserInput: JSON.stringify(triggerContext),
+    context: triggerContext,
+  });
 
-  const airiaRes = await fetch(airiaUrl, {
+  // Airia deployments can be configured to accept either X-API-Key or Bearer auth.
+  // Try X-API-Key first, then retry with Bearer if needed.
+  let airiaRes = await fetch(airiaUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       ...(airiaKey ? { Authorization: `Bearer ${airiaKey}` } : {}),
     },
-    body: JSON.stringify({ calls_since: callsSince, triggered_at: new Date().toISOString() }),
+    body: payload,
   });
+
+  if (!airiaRes.ok && airiaKey) {
+    airiaRes = await fetch(airiaUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${airiaKey}`,
+      },
+      body: payload,
+    });
+  }
 
   if (!airiaRes.ok) {
     const text = await airiaRes.text();

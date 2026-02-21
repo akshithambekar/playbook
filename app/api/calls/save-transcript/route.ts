@@ -1,4 +1,4 @@
-import db from "@/lib/db";
+import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
 // ElevenLabs ConvAI conversation detail response
@@ -17,6 +17,7 @@ type ElevenLabsConversation = {
 };
 
 export async function POST(request: Request) {
+  const supabase = await createClient();
   const { conversation_id } = await request.json();
 
   if (!conversation_id) {
@@ -58,56 +59,59 @@ export async function POST(request: Request) {
   const mainObjection = conv.data_collection_results?.main_objection?.value ?? null;
   const interestLevel = conv.data_collection_results?.interest_level?.value ?? null;
 
-  const latestPlaybook = db
-    .prepare(`SELECT id FROM playbooks ORDER BY version DESC LIMIT 1`)
-    .get() as { id: string } | undefined;
+  const { data: latestPlaybook } = await supabase
+    .from("playbooks")
+    .select("id")
+    .order("version", { ascending: false })
+    .limit(1)
+    .maybeSingle();
 
   try {
-    const existing = db
-      .prepare(`SELECT id FROM calls WHERE elevenlabs_conversation_id = ?`)
-      .get(conversation_id) as { id: string } | undefined;
+    const { data: existing } = await supabase
+      .from("calls")
+      .select("id, transcript")
+      .eq("elevenlabs_conversation_id", conversation_id)
+      .maybeSingle();
 
     let callId: string;
 
     if (existing) {
-      db.prepare(
-        `UPDATE calls
-         SET transcript = CASE
-               WHEN ? IS NOT NULL AND ? != '' THEN ?
-               ELSE transcript
-             END,
-             outcome = COALESCE(?, outcome),
-             main_objection = COALESCE(?, main_objection),
-             interest_level = COALESCE(?, interest_level),
-             playbook_id = COALESCE(playbook_id, ?)
-         WHERE elevenlabs_conversation_id = ?`
-      ).run(
-        hasTranscript ? transcriptText : null,
-        hasTranscript ? transcriptText : "",
-        hasTranscript ? transcriptText : null,
-        outcome,
-        mainObjection,
-        interestLevel,
-        latestPlaybook?.id ?? null,
-        conversation_id
-      );
+      const updatePayload: Record<string, unknown> = {
+        outcome: outcome,
+        main_objection: mainObjection,
+        interest_level: interestLevel,
+      };
+      if (latestPlaybook?.id) updatePayload.playbook_id = latestPlaybook.id;
+      if (hasTranscript) updatePayload.transcript = transcriptText;
+
+      const { error: updateError } = await supabase
+        .from("calls")
+        .update(updatePayload)
+        .eq("id", existing.id);
+      if (updateError) {
+        return NextResponse.json({ error: updateError.message }, { status: 500 });
+      }
       callId = existing.id;
     } else {
-      callId = crypto.randomUUID();
-      db.prepare(
-        `INSERT INTO calls
-           (id, elevenlabs_conversation_id, transcript, outcome, main_objection, interest_level, playbook_id, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(
-        callId,
-        conversation_id,
-        hasTranscript ? transcriptText : null,
-        outcome,
-        mainObjection,
-        interestLevel,
-        latestPlaybook?.id ?? null,
-        new Date().toISOString()
-      );
+      const { data: inserted, error: insertError } = await supabase
+        .from("calls")
+        .insert({
+          elevenlabs_conversation_id: conversation_id,
+          transcript: hasTranscript ? transcriptText : null,
+          outcome: outcome,
+          main_objection: mainObjection,
+          interest_level: interestLevel,
+          playbook_id: latestPlaybook?.id ?? null,
+        })
+        .select("id")
+        .single();
+      if (insertError || !inserted) {
+        return NextResponse.json(
+          { error: insertError?.message ?? "Could not insert call row" },
+          { status: 500 }
+        );
+      }
+      callId = inserted.id;
     }
 
     if (!hasTranscript) {

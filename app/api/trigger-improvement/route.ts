@@ -1,30 +1,47 @@
-import db from "@/lib/db";
+import { createClient } from "@/lib/supabase/server";
 import { NextResponse } from "next/server";
 
 export async function POST() {
+  const supabase = await createClient();
   const batchSize = parseInt(process.env.IMPROVEMENT_BATCH_SIZE ?? "1", 10);
+  const airiaPaused =
+    (process.env.AIRIA_PAUSED ?? "true").toLowerCase() !== "false";
 
   // Find the timestamp of the last improvement so we only count new calls
-  const lastLog = db
-    .prepare(
-      `SELECT created_at FROM improvement_logs ORDER BY created_at DESC LIMIT 1`
-    )
-    .get() as { created_at: string } | undefined;
+  const { data: lastLog } = await supabase
+    .from("improvement_logs")
+    .select("created_at")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .single();
 
   const since = lastLog?.created_at ?? new Date(0).toISOString();
 
   // Count calls that have completed analysis since the last improvement
-  const { count } = db
-    .prepare(
-      `SELECT COUNT(*) as count FROM calls WHERE created_at >= ?`
-    )
-    .get(since) as { count: number };
+  const { count, error: countError } = await supabase
+    .from("calls")
+    .select("id", { count: "exact", head: true })
+    .gte("created_at", since);
+
+  if (countError) {
+    return NextResponse.json({ error: countError.message }, { status: 500 });
+  }
 
   const callsSince = count ?? 0;
 
   if (callsSince < batchSize) {
     return NextResponse.json({
       triggered: false,
+      calls_since_last_improvement: callsSince,
+      threshold: batchSize,
+    });
+  }
+
+  if (airiaPaused) {
+    return NextResponse.json({
+      triggered: false,
+      paused: true,
+      reason: "Airia calls are paused by AIRIA_PAUSED",
       calls_since_last_improvement: callsSince,
       threshold: batchSize,
     });
@@ -45,7 +62,7 @@ export async function POST() {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(airiaKey ? { "X-API-Key": airiaKey } : {}),
+      ...(airiaKey ? { Authorization: `Bearer ${airiaKey}` } : {}),
     },
     body: JSON.stringify({ calls_since: callsSince, triggered_at: new Date().toISOString() }),
   });

@@ -47,6 +47,46 @@ const PLAYBOOK_FIELDS: { key: keyof Playbook; label: string }[] = [
   { key: "close_technique", label: "Close Technique" },
 ];
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function persistTranscriptWithRetry(conversationId: string) {
+  // ElevenLabs can take a few seconds to finalize conversation transcript data.
+  const retryDelaysMs = [0, 1500, 3000, 6000, 10000];
+
+  for (let i = 0; i < retryDelaysMs.length; i += 1) {
+    if (retryDelaysMs[i] > 0) {
+      await sleep(retryDelaysMs[i]);
+    }
+
+    try {
+      const res = await fetch("/api/calls/save-transcript", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation_id: conversationId }),
+      });
+
+      const json = await res.json().catch(() => ({}));
+      if (res.ok && json?.ok === true) {
+        return;
+      }
+
+      if (json?.pending !== true) {
+        console.error("[save-transcript] unexpected response", {
+          status: res.status,
+          body: json,
+        });
+        return;
+      }
+    } catch (err) {
+      console.error("[save-transcript] request failed", err);
+    }
+  }
+
+  console.warn("[save-transcript] transcript still pending after retries", {
+    conversationId,
+  });
+}
+
 export function AgentConsole({
   playbook,
   callsSinceLast,
@@ -72,11 +112,9 @@ export function AgentConsole({
       conversationIdRef.current = null;
 
       if (endedId) {
-        fetch("/api/calls/save-transcript", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ conversation_id: endedId }),
-        }).catch((err) => console.error("[save-transcript]", err));
+        persistTranscriptWithRetry(endedId).catch((err) =>
+          console.error("[save-transcript]", err)
+        );
       }
     },
     onError: (msg) => {

@@ -6,6 +6,44 @@ An autonomous voice sales agent built on ElevenLabs Conversational AI that condu
 
 ---
 
+## Build Status (as of Feb 21, 2026)
+
+### Completed in code
+
+- [x] Next.js app scaffolded with API routes and frontend call console
+- [x] Local DB schema + seed implemented for `playbooks`, `calls`, `call_analysis`, `improvement_logs`
+- [x] `GET /api/playbooks/latest`
+- [x] `POST /api/playbooks` (version auto-increment)
+- [x] `POST /api/webhooks/audio` (base64 decode + Velma call + analysis upsert)
+- [x] `POST /api/webhooks/transcript` route implemented
+- [x] `GET /api/calls/recent`
+- [x] `POST /api/trigger-improvement` (threshold + Airia webhook trigger)
+- [x] Velma integration function in `lib/velma/analyze.ts`
+- [x] Frontend includes ElevenLabs widget session startup + dynamic variables + improvement status UI
+- [x] Fallback transcript sync route (`POST /api/calls/save-transcript`) for conversations that did not arrive via webhook
+
+### In progress / needs live verification
+
+- [ ] ElevenLabs transcript webhook delivery is currently unreliable/not observed consistently
+- [ ] End-to-end webhook verification through ngrok (transcript + audio)
+- [ ] Velma output quality validation across 2-3 real calls
+- [ ] Airia full 6-node pipeline verification against live `GET /api/calls/recent` data
+- [ ] Improvement loop verification: conversation -> analysis -> rewrite -> next call uses updated playbook
+
+### Not done yet (from original PRD scope)
+
+- [ ] Supabase as runtime DB for app (current app runtime DB is local SQLite)
+- [ ] `improvement_logs` writes wired into the playbook rewrite path
+- [ ] Lightdash setup and dashboard panels validated with live data
+- [ ] Demo assets and rehearsal package (screenshots, logs, playbook diffs, speaker roles)
+- [ ] Final Devpost submission polish
+
+### Immediate blocker
+
+- Transcript webhook issue: ElevenLabs transcript callbacks are not consistently reaching/processing at `POST /api/webhooks/transcript`.
+
+---
+
 ## Hackathon Fit
 
 | Criteria (20% each)          | How We Score                                                                                                                                                     |

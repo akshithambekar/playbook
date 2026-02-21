@@ -45,10 +45,14 @@ export async function POST(request: Request) {
 
   const conv: ElevenLabsConversation = await elRes.json();
 
-  // Flatten the transcript array into a single string (same format ElevenLabs webhooks use)
-  const transcriptText = conv.transcript
-    ? conv.transcript.map((t) => `${t.role}: ${t.message}`).join("\n")
-    : null;
+  // Flatten the transcript array into a single string (same format ElevenLabs webhooks use).
+  // Important: ElevenLabs may return an empty array immediately after disconnect.
+  const transcriptTurns = Array.isArray(conv.transcript) ? conv.transcript : [];
+  const transcriptText = transcriptTurns
+    .map((t) => `${t.role}: ${t.message}`)
+    .join("\n")
+    .trim();
+  const hasTranscript = transcriptTurns.length > 0 && transcriptText.length > 0;
 
   const outcome = conv.data_collection_results?.outcome?.value ?? null;
   const mainObjection = conv.data_collection_results?.main_objection?.value ?? null;
@@ -68,14 +72,19 @@ export async function POST(request: Request) {
     if (existing) {
       db.prepare(
         `UPDATE calls
-         SET transcript = ?,
-             outcome = ?,
-             main_objection = ?,
-             interest_level = ?,
+         SET transcript = CASE
+               WHEN ? IS NOT NULL AND ? != '' THEN ?
+               ELSE transcript
+             END,
+             outcome = COALESCE(?, outcome),
+             main_objection = COALESCE(?, main_objection),
+             interest_level = COALESCE(?, interest_level),
              playbook_id = COALESCE(playbook_id, ?)
          WHERE elevenlabs_conversation_id = ?`
       ).run(
-        transcriptText,
+        hasTranscript ? transcriptText : null,
+        hasTranscript ? transcriptText : "",
+        hasTranscript ? transcriptText : null,
         outcome,
         mainObjection,
         interestLevel,
@@ -92,7 +101,7 @@ export async function POST(request: Request) {
       ).run(
         callId,
         conversation_id,
-        transcriptText,
+        hasTranscript ? transcriptText : null,
         outcome,
         mainObjection,
         interestLevel,
@@ -101,7 +110,20 @@ export async function POST(request: Request) {
       );
     }
 
-    return NextResponse.json({ ok: true, call_id: callId });
+    if (!hasTranscript) {
+      return NextResponse.json(
+        {
+          ok: false,
+          pending: true,
+          call_id: callId,
+          conversation_status: conv.status,
+          transcript_turns: transcriptTurns.length,
+        },
+        { status: 202 }
+      );
+    }
+
+    return NextResponse.json({ ok: true, pending: false, call_id: callId });
   } catch (err) {
     console.error("[save-transcript] DB error:", err);
     return NextResponse.json({ error: String(err) }, { status: 500 });

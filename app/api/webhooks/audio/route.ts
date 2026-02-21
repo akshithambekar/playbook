@@ -2,33 +2,126 @@ import { createClient } from "@/lib/supabase/server";
 import { analyzeCall } from "@/lib/velma/analyze";
 import { NextResponse } from "next/server";
 
-// ElevenLabs post-call audio webhook payload
 type ElevenLabsAudioWebhook = {
-  conversation_id: string;
-  // Base64-encoded audio from ElevenLabs
+  conversation_id?: string;
+  conversationId?: string;
   audio?: string;
   audio_base64?: string;
+  audio_base_64?: string;
+  audioBase64?: string;
+  audio_url?: string;
+  recording_url?: string;
+  event?: {
+    type?: string;
+    data?: {
+      conversation_id?: string;
+      conversationId?: string;
+      audio?: string;
+      audio_base64?: string;
+      audio_base_64?: string;
+      audioBase64?: string;
+      audio_url?: string;
+      recording_url?: string;
+    };
+  };
+  data?: {
+    conversation_id?: string;
+    conversationId?: string;
+    audio?: string;
+    audio_base64?: string;
+    audio_base_64?: string;
+    audioBase64?: string;
+    audio_url?: string;
+    recording_url?: string;
+  };
 };
+
+function getNestedPayload(body: ElevenLabsAudioWebhook) {
+  return body.data ?? body.event?.data ?? null;
+}
+
+function getConversationId(body: ElevenLabsAudioWebhook): string | null {
+  const nested = getNestedPayload(body);
+  return (
+    body.conversation_id ??
+    body.conversationId ??
+    nested?.conversation_id ??
+    nested?.conversationId ??
+    null
+  );
+}
+
+function getAudioBase64(body: ElevenLabsAudioWebhook): string | null {
+  const nested = getNestedPayload(body);
+  return (
+    body.audio ??
+    body.audio_base64 ??
+    body.audio_base_64 ??
+    body.audioBase64 ??
+    nested?.audio ??
+    nested?.audio_base64 ??
+    nested?.audio_base_64 ??
+    nested?.audioBase64 ??
+    null
+  );
+}
+
+function getAudioUrl(body: ElevenLabsAudioWebhook): string | null {
+  const nested = getNestedPayload(body);
+  return body.audio_url ?? body.recording_url ?? nested?.audio_url ?? nested?.recording_url ?? null;
+}
 
 export async function POST(request: Request) {
   const supabase = await createClient();
   const body: ElevenLabsAudioWebhook = await request.json();
 
-  const conversationId = body.conversation_id;
+  const conversationId = getConversationId(body);
   if (!conversationId) {
+    console.warn("[webhook/audio] Ignored payload without conversation_id", {
+      topLevelKeys: Object.keys(body ?? {}),
+      eventType: body.event?.type ?? null,
+    });
     return NextResponse.json(
-      { error: "Missing conversation_id" },
-      { status: 400 }
+      { ok: false, ignored: true, reason: "Missing conversation_id" },
+      { status: 202 }
     );
   }
 
-  const b64Audio = body.audio ?? body.audio_base64;
-  if (!b64Audio) {
-    return NextResponse.json({ error: "Missing audio payload" }, { status: 400 });
+  let audioBuffer: Buffer | null = null;
+  const b64Audio = getAudioBase64(body);
+  if (b64Audio) {
+    audioBuffer = Buffer.from(b64Audio, "base64");
   }
 
-  // Decode base64 → Buffer for Velma
-  const audioBuffer = Buffer.from(b64Audio, "base64");
+  // Some providers deliver audio by URL instead of inline base64.
+  if (!audioBuffer) {
+    const audioUrl = getAudioUrl(body);
+    if (audioUrl) {
+      const audioRes = await fetch(audioUrl);
+      if (!audioRes.ok) {
+        const detail = await audioRes.text();
+        console.error("[webhook/audio] Failed to fetch audio URL:", audioRes.status, detail);
+        return NextResponse.json(
+          { error: "Failed to fetch audio URL", detail },
+          { status: 502 }
+        );
+      }
+      const bytes = await audioRes.arrayBuffer();
+      audioBuffer = Buffer.from(bytes);
+    }
+  }
+
+  if (!audioBuffer) {
+    console.warn("[webhook/audio] Ignored payload without audio data", {
+      conversationId,
+      topLevelKeys: Object.keys(body ?? {}),
+      eventType: body.event?.type ?? null,
+    });
+    return NextResponse.json(
+      { ok: false, ignored: true, reason: "Missing audio payload" },
+      { status: 202 }
+    );
+  }
 
   // Look up the call row by conversation_id
   const { data: existingCall, error: callError } = await supabase

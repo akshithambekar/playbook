@@ -73,7 +73,7 @@ export async function POST() {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(airiaKey ? { Authorization: `Bearer ${airiaKey}` } : {}),
+      ...(airiaKey ? { "X-API-Key": airiaKey } : {}),
     },
     body: payload,
   });

@@ -50,7 +50,7 @@ export async function POST() {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      ...(airiaKey ? { Authorization: `Bearer ${airiaKey}` } : {}),
+      ...(airiaKey ? { "X-API-Key": airiaKey } : {}),
     },
     body: JSON.stringify({ calls_since: callsSince, triggered_at: new Date().toISOString() }),
   });

@@ -1,4 +1,4 @@
-# CloserLoop — System Design v8
+# Project Requirements Document
 
 ## Self-Improving Voice Sales Agent
 
@@ -20,10 +20,10 @@ An autonomous voice sales agent built on ElevenLabs Conversational AI that condu
 
 ## End-to-End Flow
 
-1. **Initiate Conversation** — Next.js app fetches latest playbook from Postgres, opens ElevenLabs widget with playbook fields injected as dynamic variables
+1. **Initiate Conversation** — Next.js app fetches latest playbook from Supabase, opens ElevenLabs widget with playbook fields injected as dynamic variables
 2. **Conduct Conversation** — ElevenLabs handles the full interaction (STT + LLM + TTS + turn-taking). The playbook IS the system prompt.
 3. **Conversation Ends → Webhooks Fire** — ElevenLabs sends post-call transcript + audio to our Next.js API routes (exposed via ngrok)
-4. **Analyze with Modulate Velma** — API route sends the audio to Velma, gets back emotion trajectory, engagement score, tone, deception flags. Stores everything in Postgres.
+4. **Analyze with Modulate Velma** — API route sends the audio to Velma, gets back emotion trajectory, engagement score, tone, deception flags. Stores everything in Supabase.
 5. **Check if Improvement Needed** — If calls since last improvement >= BATCH_SIZE (e.g. 3): trigger Airia
 6. **Airia Rewrites the Playbook** — Airia pipeline fetches call data from our API (via ngrok), LLM analyzes patterns, second LLM generates improved playbook, saves to DB
 7. **Next Conversation Uses New Playbook** — Dynamic variables pull the updated playbook. Agent is now better.
@@ -63,11 +63,11 @@ A 6-node pipeline in Agent Studio (low-code canvas) that is the autonomous brain
 3. **LLM Analysis** — identifies what worked, what failed, emotion insights
 4. **LLM Generation** — writes improved playbook (strategy, opener, objection style, tone, close technique, rationale)
 5. **Formatter** — validates JSON schema
-6. **API Call** — saves new playbook to our Postgres DB
+6. **API Call** — saves new playbook to our Supabase DB
 
 ### Lightdash (Analytics Dashboard)
 
-Connected to Postgres. Proves the agent is actually improving.
+Connected to Supabase. Proves the agent is actually improving.
 
 - **Conversion rate by playbook version** — the hero chart, should trend up
 - **Engagement score by strategy** — which playbooks produce better emotional responses
@@ -84,15 +84,17 @@ Connected to Postgres. Proves the agent is actually improving.
 | Voice Intelligence | Modulate Velma API                                                    |
 | Orchestration      | Airia Agent Studio + REST API                                         |
 | Analytics          | Lightdash Cloud                                                       |
-| Database           | PostgreSQL (local via Docker or Supabase free tier)                   |
+| Database           | Supabase (hosted Postgres, free tier)                                 |
 | App                | Next.js (frontend + API routes), runs locally                         |
 | Tunnel             | ngrok (exposes local API routes for webhooks from ElevenLabs + Airia) |
 
-Everything is TypeScript. One repo, runs locally, ngrok exposes it.
+Everything is TypeScript. One repo, runs locally, ngrok exposes it. Supabase gives us a hosted Postgres with a connection string that both our local app and Lightdash Cloud can connect to — no tunneling the DB.
 
 ---
 
-## Database Schema (Postgres)
+## Database (Supabase — hosted Postgres)
+
+Free tier, instant setup. One connection string used by both the local Next.js app and Lightdash Cloud.
 
 Four tables:
 
@@ -108,7 +110,7 @@ Four tables:
 - Agree on DB schema, API route contracts, playbook JSON shape
 - Both create accounts (ElevenLabs, Modulate, Airia, Lightdash)
 - Init Next.js repo, push to GitHub, both clone
-- Spin up Postgres (local Docker or Supabase)
+- One person creates Supabase project, shares connection string
 - Start ngrok, share the tunnel URL
 
 ---
@@ -117,7 +119,7 @@ Four tables:
 
 | #   | Task                            | Details                                                                                                 | Done when                                    |
 | --- | ------------------------------- | ------------------------------------------------------------------------------------------------------- | -------------------------------------------- |
-| 1   | Init Next.js project            | App Router, install Prisma/Drizzle, connect to Postgres                                                 | Project runs locally                         |
+| 1   | Init Next.js project            | App Router, install Prisma/Drizzle, connect to Supabase via connection string                           | Project runs locally, queries work           |
 | 2   | DB schema + seed                | Create 4 tables, seed with handwritten v1 playbook                                                      | Can query playbooks table                    |
 | 3   | `GET /api/playbooks/latest`     | Returns current playbook JSON                                                                           | Person 2's frontend can fetch it             |
 | 4   | `POST /api/playbooks`           | Saves new playbook from Airia, auto-increments version                                                  | curl POST creates a new row                  |
@@ -129,7 +131,7 @@ Four tables:
 | 10  | Build Velma integration         | `analyzeCall` function: takes audio buffer → calls Velma API → returns call_analysis schema             | Sample audio → structured analysis JSON      |
 | 11  | Handle audio format conversion  | ElevenLabs sends base64, Velma may need WAV/MP3 — handle the conversion                                 | End-to-end audio pipeline works              |
 | 12  | Test Velma with samples         | Record 2-3 sample conversations, run through Velma, verify output is meaningful                         | Confident in data quality                    |
-| 13  | Set up Lightdash                | Lightdash Cloud trial, connect to Postgres (via connection string or ngrok tunnel to local DB)          | Lightdash can see tables                     |
+| 13  | Set up Lightdash                | Lightdash Cloud trial, connect to Supabase using the same connection string                             | Lightdash can see tables                     |
 | 14  | Build dashboard panels          | Conversion rate by version, engagement by strategy, strategy changelog, conversation feed               | 4 panels rendering with seeded data          |
 | 15  | Start ngrok                     | Expose local Next.js on a public URL, share with Person 2 for webhook config                            | Stable tunnel URL available                  |
 
@@ -160,13 +162,13 @@ Four tables:
 
 ### Phase 1: Parallel Build (11:00–1:30, 2.5 hrs)
 
-| Time        | Person 1 (App + Velma + Lightdash)                                                    | Person 2 (ElevenLabs + Airia + Frontend)                             |
-| ----------- | ------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| 11:00–11:15 | **Together:** agree on contracts, init repo, spin up DB, create accounts, start ngrok |                                                                      |
-| 11:15–11:45 | Tasks 1-4: Next.js init, DB schema + seed, playbook routes                            | Tasks 1-5: ElevenLabs agent, prompt, data collection, webhooks, test |
-| 11:45–12:15 | Tasks 5-8: Webhook handlers, recent calls endpoint, improvement trigger               | Tasks 6-10: Airia project, all 6 pipeline nodes                      |
-| 12:15–1:00  | Tasks 9-12: Talk to Modulate, build Velma integration, test with samples              | Tasks 11-12: Iterate on Airia LLM prompts, test with mock data       |
-| 1:00–1:30   | Tasks 13-14: Lightdash setup + dashboard panels                                       | Tasks 13-14: Frontend page with widget + status UI                   |
+| Time        | Person 1 (App + Velma + Lightdash)                                                                 | Person 2 (ElevenLabs + Airia + Frontend)                             |
+| ----------- | -------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| 11:00–11:15 | **Together:** agree on contracts, init repo, create Supabase project, create accounts, start ngrok |                                                                      |
+| 11:15–11:45 | Tasks 1-4: Next.js init, DB schema + seed, playbook routes                                         | Tasks 1-5: ElevenLabs agent, prompt, data collection, webhooks, test |
+| 11:45–12:15 | Tasks 5-8: Webhook handlers, recent calls endpoint, improvement trigger                            | Tasks 6-10: Airia project, all 6 pipeline nodes                      |
+| 12:15–1:00  | Tasks 9-12: Talk to Modulate, build Velma integration, test with samples                           | Tasks 11-12: Iterate on Airia LLM prompts, test with mock data       |
+| 1:00–1:30   | Tasks 13-14: Lightdash setup + dashboard panels                                                    | Tasks 13-14: Frontend page with widget + status UI                   |
 
 ### Phase 2: Integration (1:30–2:45, 1.25 hrs)
 
@@ -183,13 +185,3 @@ Four tables:
 | 2:45–3:30 | Run the **complete loop** 3+ times. Conversation → Velma → Airia rewrite → new playbook → next conversation. Fix bugs. |
 | 3:30–4:00 | Capture demo materials: Lightdash screenshots, Airia logs, playbook diffs. Rehearse 3-min demo. Assign speaking roles. |
 | 4:00–4:30 | Final polish, submit to Devpost.                                                                                       |
-
----
-
-## Demo Script (3 minutes)
-
-- **0:00–0:30** — "CloserLoop is a voice sales agent that makes itself better at selling. No human touches it." Show the architecture.
-- **0:30–1:15** — Show Conversation #1 (v1 playbook). Point to Velma analysis: low engagement, frustration spike at pricing. Point to Lightdash: low conversion.
-- **1:15–1:45** — Show Airia pipeline firing. Walk through what it found and what it changed. Show the playbook diff.
-- **1:45–2:30** — Show Conversation #3 (v2 playbook). Better engagement, smoother objection handling. Lightdash: conversion trending up, engagement higher.
-- **2:30–3:00** — "Modulate tells it how conversations feel. Airia rewrites the strategy. Lightdash proves it's working. The loop is fully autonomous." Close.

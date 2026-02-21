@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { analyzeCall } from "@/lib/velma/analyze";
 import { NextResponse } from "next/server";
 
 // ElevenLabs post-call transcript webhook payload
@@ -95,6 +96,39 @@ function normalizeWebhookPayload(body: ElevenLabsTranscriptWebhook) {
   return { conversationId, transcript, outcome, mainObjection, interestLevel };
 }
 
+async function runAudioAnalysisFromConversation(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  conversationId: string,
+  callId: string
+) {
+  const elevenlabsKey = process.env.ELEVENLABS_API_KEY;
+  if (!elevenlabsKey) return;
+
+  const audioRes = await fetch(
+    `https://api.elevenlabs.io/v1/convai/conversations/${conversationId}/audio`,
+    { headers: { "xi-api-key": elevenlabsKey } }
+  );
+
+  if (!audioRes.ok) {
+    const detail = await audioRes.text();
+    throw new Error(`Could not fetch conversation audio (${audioRes.status}): ${detail}`);
+  }
+
+  const audioBuffer = Buffer.from(await audioRes.arrayBuffer());
+  if (!audioBuffer.length) {
+    throw new Error("Fetched empty audio payload");
+  }
+
+  const analysis = await analyzeCall(audioBuffer, `${conversationId}.mp3`);
+  const { error } = await supabase
+    .from("call_analysis")
+    .upsert({ call_id: callId, ...analysis }, { onConflict: "call_id" });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const body = (await request.json()) as ElevenLabsTranscriptWebhook;
@@ -126,6 +160,8 @@ export async function POST(request: Request) {
     .eq("elevenlabs_conversation_id", conversationId)
     .maybeSingle();
 
+  let callId: string;
+
   if (existingCall) {
     const updatePayload: Record<string, unknown> = {
       outcome: outcome as
@@ -151,32 +187,45 @@ export async function POST(request: Request) {
       console.error("[webhook/transcript] DB error:", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+    callId = existingCall.id;
+  } else {
+    const { data, error } = await supabase
+      .from("calls")
+      .insert({
+        elevenlabs_conversation_id: conversationId,
+        transcript: transcript,
+        outcome: outcome as
+          | "converted"
+          | "no_close"
+          | "callback"
+          | "hung_up"
+          | null,
+        main_objection: mainObjection,
+        interest_level: interestLevel,
+        playbook_id: latestPlaybook?.id ?? null,
+      })
+      .select()
+      .single();
 
-    return NextResponse.json({ ok: true, call_id: existingCall.id });
+    if (error) {
+      console.error("[webhook/transcript] DB error:", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
+    callId = data.id;
   }
 
-  const { data, error } = await supabase
-    .from("calls")
-    .insert({
-      elevenlabs_conversation_id: conversationId,
-      transcript: transcript,
-      outcome: outcome as
-        | "converted"
-        | "no_close"
-        | "callback"
-        | "hung_up"
-        | null,
-      main_objection: mainObjection,
-      interest_level: interestLevel,
-      playbook_id: latestPlaybook?.id ?? null,
-    })
-    .select()
-    .single();
-
-  if (error) {
-    console.error("[webhook/transcript] DB error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  // Fast reliability hotfix: if ElevenLabs audio webhook is flaky, pull audio directly
+  // from Conversation API when transcript webhook arrives.
+  try {
+    await runAudioAnalysisFromConversation(supabase, conversationId, callId);
+  } catch (err) {
+    console.error("[webhook/transcript] audio analysis fallback failed:", err);
   }
 
-  return NextResponse.json({ ok: true, call_id: data.id });
+  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
+  fetch(`${baseUrl}/api/trigger-improvement`, { method: "POST" }).catch((e) =>
+    console.error("[webhook/transcript] trigger-improvement error:", e)
+  );
+
+  return NextResponse.json({ ok: true, call_id: callId });
 }

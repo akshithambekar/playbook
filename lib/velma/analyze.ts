@@ -65,16 +65,16 @@ export async function analyzeCall(
   audioBuffer: Buffer,
   filename = "call.mp3"
 ): Promise<Omit<CallAnalysis, "id" | "call_id" | "created_at">> {
-  const velmaKey = process.env.MODULATE_API_KEY;
+  const modulateKey = process.env.MODULATE_API_KEY;
 
-  if (!velmaKey) {
+  if (!modulateKey) {
     throw new Error("MODULATE_API_KEY must be set in environment variables");
   }
 
   const endpoint = "https://modulate-prototype-apis.com/api/velma-2-stt-batch";
 
   const formData = new FormData();
-  const blob = new Blob([audioBuffer], { type: "audio/mpeg" });
+  const blob = new Blob([new Uint8Array(audioBuffer).buffer as ArrayBuffer], { type: "audio/mpeg" });
   formData.append("upload_file", blob, filename);
   formData.append("speaker_diarization", "true");
   formData.append("emotion_signal", "true");
@@ -83,7 +83,7 @@ export async function analyzeCall(
 
   const res = await fetch(endpoint, {
     method: "POST",
-    headers: { "X-API-Key": velmaKey },
+    headers: { "X-API-Key": modulateKey },
     body: formData,
   });
 

@@ -44,9 +44,14 @@ export async function POST() {
     );
   }
 
+  const airiaKey = process.env.AIRIA_API_KEY;
+
   const airiaRes = await fetch(airiaUrl, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      ...(airiaKey ? { Authorization: `Bearer ${airiaKey}` } : {}),
+    },
     body: JSON.stringify({ calls_since: callsSince, triggered_at: new Date().toISOString() }),
   });
 

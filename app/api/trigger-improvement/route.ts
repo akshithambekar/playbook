@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 
 export async function POST() {
   const supabase = await createClient();
-  const batchSize = parseInt(process.env.IMPROVEMENT_BATCH_SIZE ?? "3", 10);
+  const batchSize = parseInt(process.env.IMPROVEMENT_BATCH_SIZE ?? "1", 10);
 
   // Find the timestamp of the last improvement so we only count new calls
   const { data: lastLog } = await supabase

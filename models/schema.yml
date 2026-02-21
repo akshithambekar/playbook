@@ -1,0 +1,159 @@
+version: 2
+
+models:
+  - name: calls_enriched
+    description: "Calls joined with playbook version and Velma voice analysis — primary model for dashboard panels 1, 2, and 4"
+    columns:
+      - name: id
+        description: "Call UUID"
+        meta:
+          dimension:
+            type: string
+            hidden: true
+
+      - name: created_at
+        description: "When the call happened"
+        meta:
+          dimension:
+            type: timestamp
+            label: "Call time"
+
+      - name: outcome
+        description: "Call outcome: converted, no_close, callback, hung_up"
+        meta:
+          dimension:
+            type: string
+            label: "Outcome"
+          metrics:
+            converted_calls:
+              type: count
+              filters:
+                - outcome: "converted"
+              label: "Converted calls"
+
+      - name: main_objection
+        description: "Primary objection raised by the prospect"
+        meta:
+          dimension:
+            type: string
+            label: "Main objection"
+
+      - name: interest_level
+        description: "Prospect interest level extracted by ElevenLabs data collection"
+        meta:
+          dimension:
+            type: string
+            label: "Interest level"
+
+      - name: playbook_version
+        description: "Version number of the playbook used for this call"
+        meta:
+          dimension:
+            type: number
+            label: "Playbook version"
+
+      - name: strategy
+        description: "Strategy text from the playbook used"
+        meta:
+          dimension:
+            type: string
+            label: "Strategy"
+
+      - name: tone
+        description: "Tone instruction from the playbook"
+        meta:
+          dimension:
+            type: string
+            label: "Tone"
+
+      - name: engagement_score
+        description: "Velma engagement score 0–1"
+        meta:
+          dimension:
+            type: number
+            label: "Engagement score"
+          metrics:
+            avg_engagement_score:
+              type: average
+              label: "Avg engagement score"
+              round: 3
+
+      - name: engagement_trend
+        description: "Velma engagement trend: rising, falling, flat"
+        meta:
+          dimension:
+            type: string
+            label: "Engagement trend"
+
+      - name: agent_tone
+        description: "Tone the agent actually used, per Velma analysis"
+        meta:
+          dimension:
+            type: string
+            label: "Agent tone (actual)"
+
+  - name: improvement_history
+    description: "Airia playbook rewrite history — used for the strategy changelog panel"
+    columns:
+      - name: id
+        description: "Improvement log UUID"
+        meta:
+          dimension:
+            type: string
+            hidden: true
+
+      - name: created_at
+        description: "When Airia ran the rewrite"
+        meta:
+          dimension:
+            type: timestamp
+            label: "Rewrite time"
+
+      - name: calls_analyzed
+        description: "Number of calls Airia analyzed before writing this playbook"
+        meta:
+          dimension:
+            type: number
+            label: "Calls analyzed"
+
+      - name: old_version
+        description: "Playbook version that was replaced"
+        meta:
+          dimension:
+            type: number
+            label: "Old version"
+
+      - name: new_version
+        description: "Playbook version that was created"
+        meta:
+          dimension:
+            type: number
+            label: "New version"
+
+      - name: analysis_summary
+        description: "Airia's summary of why the playbook was changed"
+        meta:
+          dimension:
+            type: string
+            label: "Analysis summary"
+
+      - name: old_strategy
+        description: "Strategy text of the replaced playbook"
+        meta:
+          dimension:
+            type: string
+            label: "Old strategy"
+
+      - name: new_strategy
+        description: "Strategy text of the new playbook"
+        meta:
+          dimension:
+            type: string
+            label: "New strategy"
+
+      - name: rationale
+        description: "Rationale Airia wrote for the new playbook"
+        meta:
+          dimension:
+            type: string
+            label: "Rationale"

@@ -1,0 +1,15 @@
+version: 2
+
+sources:
+  - name: public
+    schema: public
+    description: "Raw tables created by schema.sql in Supabase"
+    tables:
+      - name: calls
+        description: "Every ElevenLabs conversation"
+      - name: playbooks
+        description: "Versioned sales playbooks written by Airia"
+      - name: call_analysis
+        description: "Modulate Velma voice analysis results per call"
+      - name: improvement_logs
+        description: "Tracks every time Airia rewrote the playbook"

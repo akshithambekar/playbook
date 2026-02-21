@@ -42,3 +42,11 @@ next-env.d.ts
 
 # modulate
 modulate_docs/
+
+# dbt
+/target/
+/dbt_packages/
+/logs/
+
+# sqlite database
+/data/

@@ -1,7 +1,7 @@
 "use client";
 
 import { useConversation } from "@elevenlabs/react";
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 
 export type Playbook = {
   id: string;
@@ -57,6 +57,8 @@ export function AgentConsole({
   const [callCount, setCallCount] = useState(callsSinceLast);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [callError, setCallError] = useState<string | null>(null);
+  // Ref so the onDisconnect closure always has the current conversation ID
+  const conversationIdRef = useRef<string | null>(null);
 
   const conversation = useConversation({
     onConnect: () => {
@@ -64,8 +66,18 @@ export function AgentConsole({
       setCallError(null);
     },
     onDisconnect: () => {
+      const endedId = conversationIdRef.current;
       setCallCount((prev) => prev + 1);
       setConversationId(null);
+      conversationIdRef.current = null;
+
+      if (endedId) {
+        fetch("/api/calls/save-transcript", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ conversation_id: endedId }),
+        }).catch((err) => console.error("[save-transcript]", err));
+      }
     },
     onError: (msg) => {
       console.error("[ElevenLabs]", msg);
@@ -95,6 +107,7 @@ export function AgentConsole({
         },
       });
       setConversationId(id);
+      conversationIdRef.current = id;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       setCallError(msg);

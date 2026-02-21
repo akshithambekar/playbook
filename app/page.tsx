@@ -1,40 +1,31 @@
-import { createClient } from "@/lib/supabase/server";
-import { AgentConsole } from "./components/AgentConsole";
+import db from "@/lib/db";
+import { AgentConsole, type Playbook } from "./components/AgentConsole";
 
 export default async function Home() {
-  const supabase = await createClient();
+  const playbook = db
+    .prepare(`SELECT * FROM playbooks ORDER BY version DESC LIMIT 1`)
+    .get() as Playbook | undefined;
 
-  // Fetch latest playbook + last improvement log in parallel
-  const [playbookRes, lastLogRes] = await Promise.all([
-    supabase
-      .from("playbooks")
-      .select("*")
-      .order("version", { ascending: false })
-      .limit(1)
-      .single(),
-    supabase
-      .from("improvement_logs")
-      .select("created_at")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single(),
-  ]);
+  const lastLog = db
+    .prepare(
+      `SELECT created_at FROM improvement_logs ORDER BY created_at DESC LIMIT 1`
+    )
+    .get() as { created_at: string } | undefined;
 
-  const playbook = playbookRes.data;
-  const since = lastLogRes.data?.created_at ?? new Date(0).toISOString();
+  const since = lastLog?.created_at ?? new Date(0).toISOString();
 
-  // Count calls since last improvement + fetch recent logs in parallel
-  const [callCountRes, logsRes] = await Promise.all([
-    supabase
-      .from("calls")
-      .select("id", { count: "exact", head: true })
-      .gte("created_at", since),
-    supabase
-      .from("improvement_logs")
-      .select("id, calls_analyzed, analysis_summary, created_at")
-      .order("created_at", { ascending: false })
-      .limit(5),
-  ]);
+  const { count } = db
+    .prepare(`SELECT COUNT(*) as count FROM calls WHERE created_at >= ?`)
+    .get(since) as { count: number };
+
+  const improvementLogs = db
+    .prepare(
+      `SELECT id, calls_analyzed, analysis_summary, created_at
+       FROM improvement_logs
+       ORDER BY created_at DESC
+       LIMIT 5`
+    )
+    .all() as { id: string; calls_analyzed: number; analysis_summary: string | null; created_at: string }[];
 
   const batchSize = parseInt(process.env.IMPROVEMENT_BATCH_SIZE ?? "3", 10);
 
@@ -42,9 +33,7 @@ export default async function Home() {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
         <p className="text-slate-500 text-sm" style={{ fontFamily: "var(--font-jetbrains-mono)" }}>
-          No playbook found —{" "}
-          <span className="text-amber-400">run supabase/seed.sql</span> to seed
-          the database.
+          No playbook found — database seed failed to run on startup.
         </p>
       </div>
     );
@@ -53,9 +42,9 @@ export default async function Home() {
   return (
     <AgentConsole
       playbook={playbook}
-      callsSinceLast={callCountRes.count ?? 0}
+      callsSinceLast={count ?? 0}
       batchSize={batchSize}
-      improvementLogs={logsRes.data ?? []}
+      improvementLogs={improvementLogs}
     />
   );
 }

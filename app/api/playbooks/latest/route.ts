@@ -1,19 +1,14 @@
-import { createClient } from "@/lib/supabase/server";
+import db from "@/lib/db";
 import { NextResponse } from "next/server";
 
 export async function GET() {
-  const supabase = await createClient();
+  const playbook = db
+    .prepare(`SELECT * FROM playbooks ORDER BY version DESC LIMIT 1`)
+    .get();
 
-  const { data, error } = await supabase
-    .from("playbooks")
-    .select("*")
-    .order("version", { ascending: false })
-    .limit(1)
-    .single();
-
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+  if (!playbook) {
+    return NextResponse.json({ error: "No playbook found" }, { status: 404 });
   }
 
-  return NextResponse.json(data);
+  return NextResponse.json(playbook);
 }

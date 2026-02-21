@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import db from "@/lib/db";
 import { NextResponse } from "next/server";
 
 type PlaybookPayload = {
@@ -94,8 +94,6 @@ async function parseBody(request: Request): Promise<{ data: PlaybookPayload | nu
 }
 
 export async function POST(request: Request) {
-  const supabase = await createClient();
-
   const { data: body, raw, error: parseError } = await parseBody(request);
 
   if (!body || parseError) {
@@ -119,36 +117,37 @@ export async function POST(request: Request) {
   }
 
   // Auto-increment version
-  const { data: latest, error: versionError } = await supabase
-    .from("playbooks")
-    .select("version")
-    .order("version", { ascending: false })
-    .limit(1)
-    .single();
-
-  if (versionError && versionError.code !== "PGRST116") {
-    return NextResponse.json({ error: versionError.message }, { status: 500 });
-  }
+  const latest = db
+    .prepare(`SELECT version FROM playbooks ORDER BY version DESC LIMIT 1`)
+    .get() as { version: number } | undefined;
 
   const nextVersion = (latest?.version ?? 0) + 1;
 
-  const { data, error } = await supabase
-    .from("playbooks")
-    .insert({
-      version: nextVersion,
-      strategy: body.strategy,
-      opener: body.opener,
-      objection_style: body.objection_style,
-      tone: body.tone,
-      close_technique: body.close_technique,
-      rationale: body.rationale,
-    })
-    .select()
-    .single();
+  try {
+    const id = crypto.randomUUID();
+    const now = new Date().toISOString();
+    db.prepare(
+      `INSERT INTO playbooks
+         (id, version, strategy, opener, objection_style, tone, close_technique, rationale, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(
+      id,
+      nextVersion,
+      body.strategy,
+      body.opener,
+      body.objection_style,
+      body.tone,
+      body.close_technique,
+      body.rationale,
+      now
+    );
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const inserted = db
+      .prepare(`SELECT * FROM playbooks WHERE id = ?`)
+      .get(id);
+
+    return NextResponse.json(inserted, { status: 201 });
+  } catch (err) {
+    return NextResponse.json({ error: String(err) }, { status: 500 });
   }
-
-  return NextResponse.json(data, { status: 201 });
 }

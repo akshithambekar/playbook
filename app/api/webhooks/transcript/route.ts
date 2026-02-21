@@ -1,4 +1,4 @@
-import { createClient } from "@/lib/supabase/server";
+import db from "@/lib/db";
 import { NextResponse } from "next/server";
 
 // ElevenLabs post-call transcript webhook payload
@@ -16,8 +16,11 @@ type ElevenLabsTranscriptWebhook = {
   };
 };
 
+export async function GET() {
+  return NextResponse.json({ ok: true, endpoint: "POST /api/webhooks/transcript" });
+}
+
 export async function POST(request: Request) {
-  const supabase = await createClient();
   const body: ElevenLabsTranscriptWebhook = await request.json();
 
   const conversationId = body.conversation_id;
@@ -35,38 +38,60 @@ export async function POST(request: Request) {
     body.data_collection_results?.interest_level?.value ?? null;
 
   // Get the latest playbook version to associate with this call
-  const { data: latestPlaybook } = await supabase
-    .from("playbooks")
-    .select("id")
-    .order("version", { ascending: false })
-    .limit(1)
-    .single();
+  const latestPlaybook = db
+    .prepare(`SELECT id FROM playbooks ORDER BY version DESC LIMIT 1`)
+    .get() as { id: string } | undefined;
 
-  const { data, error } = await supabase
-    .from("calls")
-    .upsert(
-      {
-        elevenlabs_conversation_id: conversationId,
-        transcript: body.transcript ?? null,
-        outcome: outcome as
-          | "converted"
-          | "no_close"
-          | "callback"
-          | "hung_up"
-          | null,
-        main_objection: mainObjection,
-        interest_level: interestLevel,
-        playbook_id: latestPlaybook?.id ?? null,
-      },
-      { onConflict: "elevenlabs_conversation_id" }
-    )
-    .select()
-    .single();
+  try {
+    // Check if a row already exists (audio webhook may have fired first)
+    const existing = db
+      .prepare(
+        `SELECT id FROM calls WHERE elevenlabs_conversation_id = ?`
+      )
+      .get(conversationId) as { id: string } | undefined;
 
-  if (error) {
-    console.error("[webhook/transcript] DB error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    let callId: string;
+
+    if (existing) {
+      // Update the existing row with transcript data
+      db.prepare(
+        `UPDATE calls
+         SET transcript = ?,
+             outcome = ?,
+             main_objection = ?,
+             interest_level = ?,
+             playbook_id = COALESCE(playbook_id, ?)
+         WHERE elevenlabs_conversation_id = ?`
+      ).run(
+        body.transcript ?? null,
+        outcome,
+        mainObjection,
+        interestLevel,
+        latestPlaybook?.id ?? null,
+        conversationId
+      );
+      callId = existing.id;
+    } else {
+      callId = crypto.randomUUID();
+      db.prepare(
+        `INSERT INTO calls
+           (id, elevenlabs_conversation_id, transcript, outcome, main_objection, interest_level, playbook_id, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        callId,
+        conversationId,
+        body.transcript ?? null,
+        outcome,
+        mainObjection,
+        interestLevel,
+        latestPlaybook?.id ?? null,
+        new Date().toISOString()
+      );
+    }
+
+    return NextResponse.json({ ok: true, call_id: callId });
+  } catch (err) {
+    console.error("[webhook/transcript] DB error:", err);
+    return NextResponse.json({ error: String(err) }, { status: 500 });
   }
-
-  return NextResponse.json({ ok: true, call_id: data.id });
 }

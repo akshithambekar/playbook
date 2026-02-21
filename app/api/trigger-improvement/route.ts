@@ -1,29 +1,24 @@
-import { createClient } from "@/lib/supabase/server";
+import db from "@/lib/db";
 import { NextResponse } from "next/server";
 
 export async function POST() {
-  const supabase = await createClient();
   const batchSize = parseInt(process.env.IMPROVEMENT_BATCH_SIZE ?? "1", 10);
 
   // Find the timestamp of the last improvement so we only count new calls
-  const { data: lastLog } = await supabase
-    .from("improvement_logs")
-    .select("created_at")
-    .order("created_at", { ascending: false })
-    .limit(1)
-    .single();
+  const lastLog = db
+    .prepare(
+      `SELECT created_at FROM improvement_logs ORDER BY created_at DESC LIMIT 1`
+    )
+    .get() as { created_at: string } | undefined;
 
   const since = lastLog?.created_at ?? new Date(0).toISOString();
 
   // Count calls that have completed analysis since the last improvement
-  const { count, error: countError } = await supabase
-    .from("calls")
-    .select("id", { count: "exact", head: true })
-    .gte("created_at", since);
-
-  if (countError) {
-    return NextResponse.json({ error: countError.message }, { status: 500 });
-  }
+  const { count } = db
+    .prepare(
+      `SELECT COUNT(*) as count FROM calls WHERE created_at >= ?`
+    )
+    .get(since) as { count: number };
 
   const callsSince = count ?? 0;
 

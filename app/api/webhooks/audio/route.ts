@@ -31,13 +31,15 @@ export async function POST(request: Request) {
   const audioBuffer = Buffer.from(b64Audio, "base64");
 
   // Look up the call row by conversation_id
-  const { data: call, error: callError } = await supabase
+  const { data: existingCall, error: callError } = await supabase
     .from("calls")
     .select("id")
     .eq("elevenlabs_conversation_id", conversationId)
     .single();
 
-  if (callError || !call) {
+  let callId: string;
+
+  if (callError || !existingCall) {
     // Transcript webhook may not have fired yet — upsert a minimal calls row
     const { data: upserted, error: upsertError } = await supabase
       .from("calls")
@@ -54,7 +56,9 @@ export async function POST(request: Request) {
         { status: 500 }
       );
     }
-    call.id = upserted.id;
+    callId = upserted.id;
+  } else {
+    callId = existingCall.id;
   }
 
   // Run Velma analysis
@@ -73,7 +77,7 @@ export async function POST(request: Request) {
   const { error: insertError } = await supabase
     .from("call_analysis")
     .upsert(
-      { call_id: call.id, ...analysis },
+      { call_id: callId, ...analysis },
       { onConflict: "call_id" }
     );
 
@@ -88,5 +92,5 @@ export async function POST(request: Request) {
     console.error("[webhook/audio] trigger-improvement error:", e)
   );
 
-  return NextResponse.json({ ok: true, call_id: call.id });
+  return NextResponse.json({ ok: true, call_id: callId });
 }

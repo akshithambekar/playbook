@@ -1,26 +1,52 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
-
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-background: #07070f;
+  --color-foreground: #e2e8f0;
+  --font-sans: var(--font-syne);
+  --font-mono: var(--font-jetbrains-mono);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #07070f;
+  color: #e2e8f0;
 }
+
+/* ── Pulse ring for idle call button ── */
+@keyframes pulse-ring {
+  0%   { transform: scale(1);   opacity: 0.5; }
+  100% { transform: scale(1.65); opacity: 0; }
+}
+.animate-pulse-ring {
+  animation: pulse-ring 2s ease-out infinite;
+}
+
+/* ── Sound bars for agent speaking ── */
+@keyframes bar-bounce-1 {
+  0%, 100% { height: 5px;  }
+  40%       { height: 18px; }
+}
+@keyframes bar-bounce-2 {
+  0%, 100% { height: 10px; }
+  50%       { height: 22px; }
+}
+@keyframes bar-bounce-3 {
+  0%, 100% { height: 7px;  }
+  30%       { height: 20px; }
+  70%       { height: 5px;  }
+}
+@keyframes bar-bounce-4 {
+  0%, 100% { height: 14px; }
+  45%       { height: 6px;  }
+  75%       { height: 18px; }
+}
+@keyframes bar-bounce-5 {
+  0%, 100% { height: 5px;  }
+  60%       { height: 15px; }
+}
+
+.bar-1 { height: 5px;  animation: bar-bounce-1 0.85s ease-in-out infinite; }
+.bar-2 { height: 10px; animation: bar-bounce-2 0.65s ease-in-out infinite; animation-delay: 0.1s; }
+.bar-3 { height: 7px;  animation: bar-bounce-3 0.95s ease-in-out infinite; animation-delay: 0.05s; }
+.bar-4 { height: 14px; animation: bar-bounce-4 0.75s ease-in-out infinite; animation-delay: 0.15s; }
+.bar-5 { height: 5px;  animation: bar-bounce-5 0.8s  ease-in-out infinite; animation-delay: 0.2s;  }

@@ -395,7 +395,7 @@ export function AgentConsole({ initialPlaybooks, initialSummary }: Props) {
                         className="text-xs tracking-[0.22em] uppercase text-slate-500"
                         style={{ fontFamily: "var(--font-mono)" }}
                     >
-                        Sales Agent
+                        Playbook
                     </span>
                     <span className="text-[9px] bg-lime-400/10 text-lime-400 border border-lime-400/20 px-2 py-0.5 rounded tracking-[0.18em] uppercase">
                         Self-Improving

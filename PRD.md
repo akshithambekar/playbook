@@ -1,6 +1,6 @@
 # Project Requirements Document
 
-## Self-Improving Voice Sales Agent
+## Playbook — Self-Improving Voice Sales
 
 An autonomous voice sales agent built on ElevenLabs Conversational AI that conducts sales conversations, analyzes its own performance via Modulate Velma, tracks metrics in Lightdash, and uses Airia to autonomously rewrite its own sales playbook — getting better at closing with every conversation.
 

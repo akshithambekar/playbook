@@ -15,9 +15,9 @@ const jetbrainsMono = JetBrains_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Sales Agent — Self-Improving",
+  title: "Playbook — Self-Improving",
   description:
-    "Autonomous voice sales agent powered by ElevenLabs, Modulate Velma, and Airia",
+    "Self-improving voice sales playbook powered by ElevenLabs, Modulate Velma, and Airia",
 };
 
 export default function RootLayout({

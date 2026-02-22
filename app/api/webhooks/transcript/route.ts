@@ -214,12 +214,14 @@ export async function POST(request: Request) {
     callId = data.id;
   }
 
-  // Fast reliability hotfix: if ElevenLabs audio webhook is flaky, pull audio directly
-  // from Conversation API when transcript webhook arrives.
-  try {
-    await runAudioAnalysisFromConversation(supabase, conversationId, callId);
-  } catch (err) {
-    console.error("[webhook/transcript] audio analysis fallback failed:", err);
+  // Optional fallback only. Keep this disabled by default so transcript handling
+  // never blocks or destabilizes the post-call flow.
+  const fallbackEnabled =
+    (process.env.TRANSCRIPT_AUDIO_FALLBACK_ENABLED ?? "false").toLowerCase() === "true";
+  if (fallbackEnabled) {
+    runAudioAnalysisFromConversation(supabase, conversationId, callId).catch((err) => {
+      console.error("[webhook/transcript] audio analysis fallback failed:", err);
+    });
   }
 
   const baseUrl = process.env.NEXT_PUBLIC_BASE_URL ?? "http://localhost:3000";
